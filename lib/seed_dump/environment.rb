@@ -1,3 +1,5 @@
+require 'byebug'
+
 class SeedDump
   module Environment
 
@@ -44,34 +46,37 @@ class SeedDump
   end
 
   def dump_all
-    @keys = Hash.new{{}}
-    @foreign_keys = {}	# Array of foreign key reflections of dependencies per model
-    @depends_on = Hash.new([])	# Array of models that are dependencies of each model
+    @keys = Hash.new{|h,k|h[k] = {}}
+    @foreign_keys = Hash.new{|h,k|h[k] = []}	# Array of foreign key reflections of dependencies per model
+    @depends_on = Hash.new{|h,k|h[k] = []}		# Array of models that are dependencies of each model
     @models.each do |model|
-      model.reflections.select do |n,r|
+      model.reflections.each do |n,r|
 	next unless r.is_a? ActiveRecord::Reflection::BelongsToReflection
 	target = ActiveSupport::Inflector.constantize(r.class_name)
 	next unless target.exists?
-	(@depends_on[model] ||= []) << target
-	(@foreign_keys[model] ||= []) << (f = r.foreign_key)
-	# puts "#{model.name} depends on #{target} via #{f} (association #{r.name})"
+	@depends_on[model] << target
+	@foreign_keys[model] << r.foreign_key
       end
     end
 
     @dumped = {}
     @to_dump = @models.dup
     until @to_dump.empty? do
-      next_model = @to_dump.detect do |model|
+      next_model = @to_dump.reverse.detect do |model|
 	# Choose a model that has not been dumped, but whose dependencies all have:
-	!@dumped[model] and
-	  !@depends_on[model].detect do |dependency|
+	next if @dumped[model]
+	undumped_dependency =
+	  @depends_on[model].detect do |dependency|
 	    !(dependency == model) and !@dumped[dependency]
 	  end
+	# puts "Not dumping #{model.name} because #{undumped_dependency.name} has not yet been dumped (picked from #{@depends_on[model].map(&:name).inspect}" if undumped_dependency
+	!undumped_dependency
       end
 
       # Just choose the next one if there's a dependency cycle.
       next_model = @to_dump.shift unless next_model
 
+      # puts "Dumping #{next_model.name} ..."
       dump_model(next_model, @options)
 
       @options[:append] = true
